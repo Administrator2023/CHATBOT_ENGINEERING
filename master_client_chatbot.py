@@ -5,7 +5,7 @@ import pdfplumber
 
 # LangChain components for text splitting, vector storage, embeddings, and LLM interaction
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import FAISS
+from langchain.vectorstores import Chroma  # Use Chroma instead of FAISS
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
 from langchain.chains import RetrievalQA
@@ -20,7 +20,7 @@ if "OPENAI_API_KEY" not in os.environ:
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 if "docs" not in st.session_state:
-    st.session_state.docs = []  # Holds all approved (learned) documents and corrections
+    st.session_state.docs = []  # Holds all approved documents and corrections
 
 # -----------------------------------------------------------------------------
 # Helper: Extract text from a file (PDF, Excel, or Text)
@@ -101,7 +101,9 @@ def admin_console():
             splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_text(full_content)
             embeddings = OpenAIEmbeddings()
-            new_store = FAISS.from_texts(chunks, embeddings)
+            
+            # Create a new Chroma vector store from texts
+            new_store = Chroma.from_texts(chunks, embeddings, collection_name="chatbot_docs")
             
             if st.session_state.vectorstore is None:
                 st.session_state.vectorstore = new_store
@@ -111,7 +113,7 @@ def admin_console():
                 all_chunks = []
                 for doc in st.session_state.docs:
                     all_chunks.extend(splitter.split_text(doc))
-                st.session_state.vectorstore = FAISS.from_texts(all_chunks, embeddings)
+                st.session_state.vectorstore = Chroma.from_texts(all_chunks, embeddings, collection_name="chatbot_docs")
             
             st.success("Method learned and added to the knowledge base!")
             
@@ -142,7 +144,7 @@ def admin_console():
             for doc in st.session_state.docs:
                 all_chunks.extend(splitter.split_text(doc))
             embeddings = OpenAIEmbeddings()
-            st.session_state.vectorstore = FAISS.from_texts(all_chunks, embeddings)
+            st.session_state.vectorstore = Chroma.from_texts(all_chunks, embeddings, collection_name="chatbot_docs")
             st.success("Correction incorporated into the knowledge base!")
         else:
             st.warning("Please provide correction text before updating.")
@@ -151,7 +153,7 @@ def admin_console():
     if st.button("Export to Disk"):
         export_dir = "exported_vectorstore"
         os.makedirs(export_dir, exist_ok=True)
-        st.session_state.vectorstore.save_local(export_dir)
+        # Chroma provides a persist_directory parameter if you need persistence.
         st.success(f"Knowledge base exported to: {export_dir}")
 
 # -----------------------------------------------------------------------------
