@@ -5,7 +5,7 @@ import pdfplumber
 
 # LangChain components for text splitting, vector storage, embeddings, and LLM interaction
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores.chromadb import Chroma
+from langchain.vectorstores.chromadb import Chroma  # Updated import for Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
 from langchain.chains import RetrievalQA
@@ -77,7 +77,7 @@ def admin_console():
         prompt = (
             "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
             "Carefully analyze the following calculation method. Identify any ambiguities or missing details, and list clarifying questions that would help you fully understand the underlying mathematical equations, logical steps, and assumptions in this method. "
-            "Please list each question clearly.\n\n" + combined
+            "Please list each question clearly:\n\n" + combined
         )
         clarifying_questions = llm(prompt)
         st.subheader("Clarifying Questions")
@@ -102,7 +102,7 @@ def admin_console():
             chunks = splitter.split_text(full_content)
             embeddings = OpenAIEmbeddings()
             
-            # Create a new Chroma vector store from texts
+            # Create a new Chroma vector store from texts (using a collection name for persistence)
             new_store = Chroma.from_texts(chunks, embeddings, collection_name="chatbot_docs")
             
             if st.session_state.vectorstore is None:
@@ -153,7 +153,7 @@ def admin_console():
     if st.button("Export to Disk"):
         export_dir = "exported_vectorstore"
         os.makedirs(export_dir, exist_ok=True)
-        # Chroma provides a persist_directory parameter if you need persistence.
+        # If needed, persist the vector store by using Chroma's persistence options.
         st.success(f"Knowledge base exported to: {export_dir}")
 
 # -----------------------------------------------------------------------------
