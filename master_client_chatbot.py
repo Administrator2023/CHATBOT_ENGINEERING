@@ -1,14 +1,18 @@
 """
-Ensure your requirements.txt file (located in the repository root) includes:
-streamlit>=1.21
-pdfplumber>=0.7.4
-pandas>=1.5
-numpy>=1.23
-langchain>=0.0.200
-chromadb>=0.3.21
-openai>=0.27.0
+Ensure that your repository includes the following files in its root:
 
-Also, ensure you have a runtime.txt (in the repository root) with:
+requirements.txt:
+-----------------
+streamlit==1.22.0
+pdfplumber==0.7.4
+pandas==1.5.3
+numpy==1.23.5
+langchain==0.0.265
+chromadb==0.3.26
+openai==0.27.0
+
+runtime.txt:
+------------
 python-3.10.12
 """
 
@@ -18,8 +22,8 @@ import pandas as pd
 import pdfplumber
 
 # =============================================================================
-# Attempt to import Chroma from the expected location.
-# This requires langchain>=0.0.200 and chromadb>=0.3.21.
+# Attempt to import Chroma from its new location.
+# This requires langchain>=0.0.200 (we are pinning to 0.0.265) and chromadb>=0.3.21 (we are pinning to 0.3.26).
 # =============================================================================
 try:
     from langchain.vectorstores.chromadb import Chroma
@@ -40,7 +44,7 @@ from langchain.chains import RetrievalQA
 # Check for API key and initialize session state
 # -----------------------------------------------------------------------------
 if "OPENAI_API_KEY" not in os.environ:
-    st.error("Please set your OPENAI_API_KEY in your environment or .streamlit/secrets.toml.")
+    st.error("Please set your OPENAI_API_KEY in your environment or in .streamlit/secrets.toml.")
     st.stop()
 
 if "vectorstore" not in st.session_state:
@@ -93,7 +97,7 @@ def admin_console():
         st.subheader("Extracted Content")
         st.text_area("", value=extracted, height=200)
         
-        # Combine the extracted file text with the provided explanation
+        # Combine extracted text with provided explanation
         combined = extracted + "\n\nExplanation:\n" + explanation
         st.subheader("Combined Content")
         st.text_area("", value=combined, height=300)
