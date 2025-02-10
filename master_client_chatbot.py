@@ -3,9 +3,24 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 
-# LangChain components for text splitting, vector storage, embeddings, and LLM interaction
+# =============================================================================
+# Attempt to import Chroma from the expected location.
+# If not found, try a fallback import; if still not found, show an error.
+# =============================================================================
+try:
+    # Preferred import (requires langchain>=0.0.200)
+    from langchain.vectorstores.chromadb import Chroma
+except ModuleNotFoundError:
+    try:
+        # Fallback for older versions (if available)
+        from langchain.vectorstores import Chroma
+    except ModuleNotFoundError:
+        st.error("Module 'Chroma' not found. Please ensure that your requirements.txt "
+                 "includes 'langchain>=0.0.200' and 'chromadb>=0.3.21', then force a rebuild.")
+        st.stop()
+
+# LangChain components for text splitting, embeddings, LLMs, and retrieval
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores.chromadb import Chroma  # Correct import path for Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
 from langchain.chains import RetrievalQA
@@ -72,7 +87,7 @@ def admin_console():
         st.subheader("Combined Content")
         st.text_area("", value=combined, height=300)
         
-        # Use GPT‑4 to ask clarifying questions
+        # Use GPT‑4 to ask clarifying questions about the method's math and logic.
         llm = ChatOpenAI(model_name="gpt-4", temperature=0)
         prompt = (
             "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
@@ -83,24 +98,26 @@ def admin_console():
         st.subheader("Clarifying Questions")
         st.write(clarifying_questions)
         
-        # Save content and clarifying questions in session state
+        # Save the combined content and clarifying questions in session state
         st.session_state.clarifying_questions = clarifying_questions
         st.session_state.current_combined = combined
 
-    # Step 2: Admin provides answers to the clarifying questions
+    # Step 2: Admin provides answers to the clarifying questions to enhance the method understanding
     if "clarifying_questions" in st.session_state:
         st.subheader("Your Answers to the Clarifying Questions")
         clarifying_answers = st.text_area("Provide your answers to the above questions. These answers will help the AI fully understand the calculation method.", height=150)
         if st.button("Learn and Save Method"):
+            # Combine clarifying answers with previously combined content
             full_content = st.session_state.current_combined + "\n\nClarifying Answers:\n" + clarifying_answers
             st.subheader("Full Combined Content")
             st.text_area("", value=full_content, height=300)
             
+            # Split content into manageable chunks and update the vector store
             splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_text(full_content)
             embeddings = OpenAIEmbeddings()
             
-            # Create a new Chroma vector store from texts
+            # Create a new Chroma vector store from texts (using a collection name for persistence)
             new_store = Chroma.from_texts(chunks, embeddings, collection_name="chatbot_docs")
             
             if st.session_state.vectorstore is None:
@@ -115,7 +132,7 @@ def admin_console():
             
             st.success("Method learned and added to the knowledge base!")
             
-            # Optionally ask GPT‑4 for further analysis
+            # Optionally, ask GPT‑4 for further analysis and suggestions.
             llm = ChatOpenAI(model_name="gpt-4", temperature=0)
             prompt_alt = (
                 "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
@@ -127,6 +144,7 @@ def admin_console():
             st.subheader("Alternative Calculation Methods & Analysis")
             st.write(alt_methods)
             
+            # Clear temporary session state variables used for clarifying questions
             st.session_state.pop("clarifying_questions", None)
             st.session_state.pop("current_combined", None)
     
@@ -170,6 +188,7 @@ def client_console():
             st.write("**Answer:**")
             st.write(ans)
         else:
+            # Use a retrieval chain to pull in relevant learned content
             retrieval_chain = RetrievalQA.from_chain_type(
                 llm=ChatOpenAI(model_name="gpt-4", temperature=0),
                 chain_type="stuff",
