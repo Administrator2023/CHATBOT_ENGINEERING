@@ -1,6 +1,6 @@
-streamlit
-pdfplumber
-pandas
-langchain
-faiss-cpu
-openai
+streamlit>=1.21
+pdfplumber>=0.7.4
+pandas>=1.5
+langchain>=0.0.148
+faiss-cpu==2.2.4
+openai>=0.27.0
