@@ -1,7 +1,7 @@
-streamlit>=1.21
-pdfplumber>=0.7.4
-pandas>=1.5
-numpy>=1.23
-langchain>=0.0.200
-chromadb>=0.3.21
-openai>=0.27.0
+streamlit==1.22.0
+pdfplumber==0.7.4
+pandas==1.5.3
+numpy==1.23.5
+langchain==0.3.18
+chromadb==0.6.3
+openai==1.61.1
