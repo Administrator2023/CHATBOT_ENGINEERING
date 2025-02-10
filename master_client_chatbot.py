@@ -1,19 +1,18 @@
 """
-Ensure that your repository includes the following files in its root:
+Ensure your repository root includes:
+- requirements.txt:
+    streamlit==1.22.0
+    pdfplumber==0.7.4
+    pandas==1.5.3
+    numpy==1.23.5
+    langchain==0.0.265
+    chromadb==0.3.26
+    openai==0.27.0
 
-requirements.txt:
------------------
-streamlit==1.22.0
-pdfplumber==0.7.4
-pandas==1.5.3
-numpy==1.23.5
-langchain==0.0.265
-chromadb==0.3.26
-openai==0.27.0
+- runtime.txt:
+    python-3.10.12
 
-runtime.txt:
-------------
-python-3.10.12
+If you use a Dockerfile (see documentation below), include it in the repository root.
 """
 
 import os
@@ -21,9 +20,16 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 
+# Debug: Check LangChain version (this will render on your app)
+try:
+    import langchain
+    st.write("LangChain version:", langchain.__version__)
+except Exception as e:
+    st.write("Error checking LangChain version:", e)
+
 # =============================================================================
 # Attempt to import Chroma from its new location.
-# This requires langchain>=0.0.200 (we are pinning to 0.0.265) and chromadb>=0.3.21 (we are pinning to 0.3.26).
+# This requires langchain>=0.0.200 and chromadb>=0.3.21.
 # =============================================================================
 try:
     from langchain.vectorstores.chromadb import Chroma
