@@ -5,7 +5,7 @@ import pdfplumber
 
 # LangChain components for text splitting, vector storage, embeddings, and LLM interaction
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores.chromadb import Chroma  # Updated import for Chroma
+from langchain.vectorstores import Chroma  # Updated import for Chroma (requires langchain>=0.0.200)
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
 from langchain.chains import RetrievalQA
