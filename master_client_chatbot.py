@@ -1,3 +1,17 @@
+"""
+Ensure your requirements.txt file (located in the repository root) includes:
+streamlit>=1.21
+pdfplumber>=0.7.4
+pandas>=1.5
+numpy>=1.23
+langchain>=0.0.200
+chromadb>=0.3.21
+openai>=0.27.0
+
+Also, ensure you have a runtime.txt (in the repository root) with:
+python-3.10.12
+"""
+
 import os
 import streamlit as st
 import pandas as pd
@@ -5,21 +19,18 @@ import pdfplumber
 
 # =============================================================================
 # Attempt to import Chroma from the expected location.
-# If not found, try a fallback import; if still not found, show an error.
+# This requires langchain>=0.0.200 and chromadb>=0.3.21.
 # =============================================================================
 try:
-    # Preferred import (requires langchain>=0.0.200)
     from langchain.vectorstores.chromadb import Chroma
 except ModuleNotFoundError:
-    try:
-        # Fallback for older versions (if available)
-        from langchain.vectorstores import Chroma
-    except ModuleNotFoundError:
-        st.error("Module 'Chroma' not found. Please ensure that your requirements.txt "
-                 "includes 'langchain>=0.0.200' and 'chromadb>=0.3.21', then force a rebuild.")
-        st.stop()
+    st.error("Module 'Chroma' not found. Please ensure that your requirements.txt includes "
+             "'langchain>=0.0.200' and 'chromadb>=0.3.21', then force a rebuild.")
+    st.stop()
 
-# LangChain components for text splitting, embeddings, LLMs, and retrieval
+# =============================================================================
+# Import remaining LangChain components
+# =============================================================================
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
@@ -87,11 +98,12 @@ def admin_console():
         st.subheader("Combined Content")
         st.text_area("", value=combined, height=300)
         
-        # Use GPT‑4 to ask clarifying questions about the method's math and logic.
+        # Use GPT-4 to ask clarifying questions about the method's math and logic.
         llm = ChatOpenAI(model_name="gpt-4", temperature=0)
         prompt = (
             "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
-            "Carefully analyze the following calculation method. Identify any ambiguities or missing details, and list clarifying questions that would help you fully understand the underlying mathematical equations, logical steps, and assumptions in this method. "
+            "Carefully analyze the following calculation method. Identify any ambiguities or missing details, and list clarifying questions "
+            "that would help you fully understand the underlying mathematical equations, logical steps, and assumptions in this method. "
             "Please list each question clearly:\n\n" + combined
         )
         clarifying_questions = llm(prompt)
@@ -102,17 +114,15 @@ def admin_console():
         st.session_state.clarifying_questions = clarifying_questions
         st.session_state.current_combined = combined
 
-    # Step 2: Admin provides answers to the clarifying questions to enhance the method understanding
+    # Step 2: Admin provides answers to the clarifying questions
     if "clarifying_questions" in st.session_state:
         st.subheader("Your Answers to the Clarifying Questions")
         clarifying_answers = st.text_area("Provide your answers to the above questions. These answers will help the AI fully understand the calculation method.", height=150)
         if st.button("Learn and Save Method"):
-            # Combine clarifying answers with previously combined content
             full_content = st.session_state.current_combined + "\n\nClarifying Answers:\n" + clarifying_answers
             st.subheader("Full Combined Content")
             st.text_area("", value=full_content, height=300)
             
-            # Split content into manageable chunks and update the vector store
             splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_text(full_content)
             embeddings = OpenAIEmbeddings()
@@ -129,22 +139,21 @@ def admin_console():
                 for doc in st.session_state.docs:
                     all_chunks.extend(splitter.split_text(doc))
                 st.session_state.vectorstore = Chroma.from_texts(all_chunks, embeddings, collection_name="chatbot_docs")
-            
+                
             st.success("Method learned and added to the knowledge base!")
             
-            # Optionally, ask GPT‑4 for further analysis and suggestions.
+            # Optionally, ask GPT-4 for further analysis and suggestions.
             llm = ChatOpenAI(model_name="gpt-4", temperature=0)
             prompt_alt = (
                 "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
-                "Analyze the following fully detailed calculation method (including the clarifying answers). Break down the underlying mathematical equations, variables, and logical steps. "
-                "Explain how each part of the calculation contributes to the overall method, and suggest any improvements or alternative approaches if applicable:\n\n" 
+                "Analyze the following fully detailed calculation method (including the clarifying answers). Break down the underlying mathematical equations, "
+                "variables, and logical steps. Explain how each part of the calculation contributes to the overall method, and suggest any improvements or alternative approaches if applicable:\n\n" 
                 + full_content
             )
             alt_methods = llm(prompt_alt)
             st.subheader("Alternative Calculation Methods & Analysis")
             st.write(alt_methods)
             
-            # Clear temporary session state variables used for clarifying questions
             st.session_state.pop("clarifying_questions", None)
             st.session_state.pop("current_combined", None)
     
@@ -188,7 +197,6 @@ def client_console():
             st.write("**Answer:**")
             st.write(ans)
         else:
-            # Use a retrieval chain to pull in relevant learned content
             retrieval_chain = RetrievalQA.from_chain_type(
                 llm=ChatOpenAI(model_name="gpt-4", temperature=0),
                 chain_type="stuff",
