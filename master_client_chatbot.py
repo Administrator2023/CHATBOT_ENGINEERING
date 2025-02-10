@@ -5,7 +5,7 @@ import pdfplumber
 
 # LangChain components for text splitting, vector storage, embeddings, and LLM interaction
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import Chroma  # Updated import for Chroma (requires langchain>=0.0.200)
+from langchain.vectorstores.chromadb import Chroma  # Correct import path for Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.llms import ChatOpenAI
 from langchain.chains import RetrievalQA
@@ -72,7 +72,7 @@ def admin_console():
         st.subheader("Combined Content")
         st.text_area("", value=combined, height=300)
         
-        # Use GPT‑4 to ask clarifying questions to ensure full understanding of the method’s math and logic.
+        # Use GPT‑4 to ask clarifying questions
         llm = ChatOpenAI(model_name="gpt-4", temperature=0)
         prompt = (
             "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
@@ -83,26 +83,24 @@ def admin_console():
         st.subheader("Clarifying Questions")
         st.write(clarifying_questions)
         
-        # Save the combined content and clarifying questions in session state
+        # Save content and clarifying questions in session state
         st.session_state.clarifying_questions = clarifying_questions
         st.session_state.current_combined = combined
 
-    # Step 2: Admin provides answers to the clarifying questions to enhance the method understanding
+    # Step 2: Admin provides answers to the clarifying questions
     if "clarifying_questions" in st.session_state:
         st.subheader("Your Answers to the Clarifying Questions")
         clarifying_answers = st.text_area("Provide your answers to the above questions. These answers will help the AI fully understand the calculation method.", height=150)
         if st.button("Learn and Save Method"):
-            # Combine the clarifying answers with the previously combined content
             full_content = st.session_state.current_combined + "\n\nClarifying Answers:\n" + clarifying_answers
             st.subheader("Full Combined Content")
             st.text_area("", value=full_content, height=300)
             
-            # Split the full content into manageable chunks and update the vector store
             splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_text(full_content)
             embeddings = OpenAIEmbeddings()
             
-            # Create a new Chroma vector store from texts (using a collection name for persistence)
+            # Create a new Chroma vector store from texts
             new_store = Chroma.from_texts(chunks, embeddings, collection_name="chatbot_docs")
             
             if st.session_state.vectorstore is None:
@@ -117,7 +115,7 @@ def admin_console():
             
             st.success("Method learned and added to the knowledge base!")
             
-            # Optionally, ask GPT‑4 for a detailed analysis with improvements and alternative approaches.
+            # Optionally ask GPT‑4 for further analysis
             llm = ChatOpenAI(model_name="gpt-4", temperature=0)
             prompt_alt = (
                 "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
@@ -129,7 +127,6 @@ def admin_console():
             st.subheader("Alternative Calculation Methods & Analysis")
             st.write(alt_methods)
             
-            # Clear the temporary session state variables used for clarifying questions
             st.session_state.pop("clarifying_questions", None)
             st.session_state.pop("current_combined", None)
     
@@ -153,7 +150,6 @@ def admin_console():
     if st.button("Export to Disk"):
         export_dir = "exported_vectorstore"
         os.makedirs(export_dir, exist_ok=True)
-        # If needed, persist the vector store by using Chroma's persistence options.
         st.success(f"Knowledge base exported to: {export_dir}")
 
 # -----------------------------------------------------------------------------
@@ -174,14 +170,12 @@ def client_console():
             st.write("**Answer:**")
             st.write(ans)
         else:
-            # Use a retrieval chain to pull in relevant learned content
             retrieval_chain = RetrievalQA.from_chain_type(
                 llm=ChatOpenAI(model_name="gpt-4", temperature=0),
                 chain_type="stuff",
                 retriever=st.session_state.vectorstore.as_retriever(search_kwargs={"k": 4})
             )
             retrieval_ans = retrieval_chain.run(question)
-            # If the retrieval-based answer seems insufficient, fall back to a broader GPT‑4 answer
             if len(retrieval_ans.strip()) < 50 or "not defined" in retrieval_ans.lower():
                 fallback_ans = fallback_llm(f"{expert_instr}\n\nThis question is not fully covered in our approved methods. Please answer: {question}")
                 final_ans = ("Our approved calculation methods do not fully cover this question. However, based on broader expert knowledge, here is our best answer: " + fallback_ans)
