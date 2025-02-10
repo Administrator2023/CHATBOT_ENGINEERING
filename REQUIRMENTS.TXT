@@ -1,7 +1,6 @@
 streamlit
-pandas
 pdfplumber
+pandas
 langchain
 faiss-cpu
 openai
-python-dotenv
