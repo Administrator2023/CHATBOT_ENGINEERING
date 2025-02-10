@@ -1,18 +1,16 @@
 """
-Ensure your repository root includes:
-- requirements.txt:
+Ensure that your repository root includes:
+- requirements.txt with:
     streamlit==1.22.0
     pdfplumber==0.7.4
     pandas==1.5.3
     numpy==1.23.5
-    langchain==0.0.265
-    chromadb==0.3.26
-    openai==0.27.0
+    langchain==0.3.18
+    chromadb==0.6.3
+    openai==1.61.1
 
-- runtime.txt:
-    python-3.10.12
-
-If you use a Dockerfile (see documentation below), include it in the repository root.
+- runtime.txt with (for example):
+    python-3.12.8
 """
 
 import os
@@ -20,31 +18,38 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 
-# Debug: Check LangChain version (this will render on your app)
+# -----------------------------------------------------------------------------
+# Attempt to import Chroma using a fallback mechanism.
+# Try the newer path first (if available), then the old one.
+# -----------------------------------------------------------------------------
+try:
+    # Preferred import (for the very latest LangChain versions)
+    from langchain.vectorstores.chromadb import Chroma
+except ModuleNotFoundError:
+    try:
+        # Fallback import for older versions (like langchain==0.3.18)
+        from langchain.vectorstores import Chroma
+    except ModuleNotFoundError:
+        st.error("Module 'Chroma' not found. Please check that your requirements.txt includes "
+                 "'langchain>=0.0.200' and 'chromadb>=0.3.21', then force a rebuild.")
+        st.stop()
+
+# -----------------------------------------------------------------------------
+# Import remaining LangChain components
+# -----------------------------------------------------------------------------
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.llms import ChatOpenAI
+from langchain.chains import RetrievalQA
+
+# -----------------------------------------------------------------------------
+# Debug: Output the installed LangChain version
+# -----------------------------------------------------------------------------
 try:
     import langchain
     st.write("LangChain version:", langchain.__version__)
 except Exception as e:
     st.write("Error checking LangChain version:", e)
-
-# =============================================================================
-# Attempt to import Chroma from its new location.
-# This requires langchain>=0.0.200 and chromadb>=0.3.21.
-# =============================================================================
-try:
-    from langchain.vectorstores.chromadb import Chroma
-except ModuleNotFoundError:
-    st.error("Module 'Chroma' not found. Please ensure that your requirements.txt includes "
-             "'langchain>=0.0.200' and 'chromadb>=0.3.21', then force a rebuild.")
-    st.stop()
-
-# =============================================================================
-# Import remaining LangChain components
-# =============================================================================
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.llms import ChatOpenAI
-from langchain.chains import RetrievalQA
 
 # -----------------------------------------------------------------------------
 # Check for API key and initialize session state
@@ -103,12 +108,12 @@ def admin_console():
         st.subheader("Extracted Content")
         st.text_area("", value=extracted, height=200)
         
-        # Combine extracted text with provided explanation
+        # Combine the extracted text with the explanation
         combined = extracted + "\n\nExplanation:\n" + explanation
         st.subheader("Combined Content")
         st.text_area("", value=combined, height=300)
         
-        # Use GPT-4 to ask clarifying questions about the method's math and logic.
+        # Use GPT‑4 to ask clarifying questions about the method's math and logic.
         llm = ChatOpenAI(model_name="gpt-4", temperature=0)
         prompt = (
             "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
@@ -152,7 +157,7 @@ def admin_console():
                 
             st.success("Method learned and added to the knowledge base!")
             
-            # Optionally, ask GPT-4 for further analysis and suggestions.
+            # Optionally, ask GPT‑4 for further analysis and suggestions.
             llm = ChatOpenAI(model_name="gpt-4", temperature=0)
             prompt_alt = (
                 "You are a PhD-level expert in structural engineering and advanced mathematics specializing in exterior facade design. "
