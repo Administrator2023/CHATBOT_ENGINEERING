@@ -1,35 +1,35 @@
 import os
 import time
 import asyncio
-import concurrent.futures
 import hashlib
-import gradio as gr
+import streamlit as st
 import pandas as pd
 import fitz  # PyMuPDF for PDF processing
 from PIL import Image
 import pytesseract
 from openpyxl import load_workbook
 
-# Manually specify Tesseract path:
+# Manually specify the path to your Tesseract executable
+# (Update with your actual installation path)
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 from sympy import sympify, simplify
 
-# Optional: xlcalculator for Excel formula evaluation
+# Optional Excel evaluator
 try:
     from xlcalculator import ModelCompiler, Evaluator
     HAS_XLCALCULATOR = True
 except ImportError:
     HAS_XLCALCULATOR = False
 
-# LangChain + Community imports
+# LangChain imports
+from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.chat_models import ChatOpenAI
-from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 from langchain.schema import HumanMessage
 
-# Import your config (make sure it's in same folder)
+# Import your config settings
 from config import (
     OPENAI_API_KEY,
     VECTOR_STORE_PATH,
@@ -43,49 +43,41 @@ from config import (
 DEBUG = True
 BYPASS_RETRIEVAL = False
 
-# Global store for admin-uploaded content
-admin_upload_content = ""
+# Initialize session state variables if not present
+if "admin_upload_content" not in st.session_state:
+    st.session_state.admin_upload_content = ""
+if "pdf_summary_cache" not in st.session_state:
+    st.session_state.pdf_summary_cache = {}
 
-# Cache for PDF summaries to reduce repeated calls
-pdf_summary_cache = {}
+########################
+# Helper / Utility
+########################
 
 def debug_print(*args):
     if DEBUG:
         print(*args)
 
-#####################################
-# HELPER FUNCTIONS
-#####################################
+def ensure_dirs_exist():
+    """Ensure upload directories exist."""
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(OCR_TEMP_DIR, exist_ok=True)
 
-def read_file_data(file_obj):
+ensure_dirs_exist()
+
+def read_file_data(uploaded_file):
     """
-    Reads raw bytes from Gradio file object or string path.
+    Reads bytes from a Streamlit UploadedFile or returns None if invalid.
     Returns (filename, raw_bytes).
     """
-    if isinstance(file_obj, str):
-        debug_print(f"[DEBUG] File object is a string path: {file_obj}")
-        with open(file_obj, "rb") as f:
-            data = f.read()
-        name = os.path.basename(file_obj)
+    if uploaded_file is None:
+        return None, None
+    try:
+        data = uploaded_file.read()
+        name = uploaded_file.name
         return name, data
-
-    if hasattr(file_obj, "read") and callable(file_obj.read):
-        debug_print("[DEBUG] File object has .read()")
-        data = file_obj.read()
-        name = getattr(file_obj, "name", "uploaded_file")
-        return name, data
-
-    if hasattr(file_obj, "value"):
-        debug_print("[DEBUG] File object has .value")
-        data = file_obj.value
-        name = getattr(file_obj, "name", "uploaded_file")
-        return name, data
-
-    if isinstance(file_obj, dict) and "name" in file_obj and "data" in file_obj:
-        debug_print("[DEBUG] File object is dict with 'name' and 'data'")
-        return file_obj["name"], file_obj["data"]
-
-    raise ValueError(f"Unsupported file object type: {file_obj}")
+    except Exception as e:
+        debug_print("[DEBUG] Error reading uploaded file:", e)
+        return None, None
 
 def get_excel_evaluator(wb):
     try:
@@ -125,17 +117,17 @@ def summarize_text_chunk(text_chunk):
     try:
         llm = ChatOpenAI(temperature=0.1, openai_api_key=OPENAI_API_KEY, max_tokens=150)
         response = llm(messages)
-        if response and hasattr(response, "content"):
-            return response.content.strip()
-        return ""
+        return response.content.strip() if response and hasattr(response, "content") else ""
     except Exception as e:
         return f"Error summarizing chunk: {e}"
 
 def advanced_understand_pdf(pdf_text):
+    """Use chunked summarization with caching."""
+    cache = st.session_state.pdf_summary_cache
     text_hash = hashlib.sha256(pdf_text.encode('utf-8')).hexdigest()
-    if text_hash in pdf_summary_cache:
+    if text_hash in cache:
         debug_print("[DEBUG] Returning cached PDF summary.")
-        return pdf_summary_cache[text_hash]
+        return cache[text_hash]
 
     max_chunk_size = 2000
     if len(pdf_text) <= max_chunk_size:
@@ -152,7 +144,7 @@ def advanced_understand_pdf(pdf_text):
                 current_chunk = line + "\n"
         if current_chunk:
             chunks.append(current_chunk)
-        debug_print(f"[DEBUG] Split PDF text into {len(chunks)} chunks for summarization.")
+        debug_print(f"[DEBUG] Split PDF text into {len(chunks)} chunks.")
 
         chunk_summaries = []
         for chunk in chunks:
@@ -162,11 +154,11 @@ def advanced_understand_pdf(pdf_text):
         combined_summary = "\n".join(chunk_summaries)
         summary = summarize_text_chunk(combined_summary)
 
-    pdf_summary_cache[text_hash] = summary
+    cache[text_hash] = summary
     return summary
 
 def extract_excel_content(file_path):
-    debug_print(f"[DEBUG] Extracting Excel content from {file_path}")
+    debug_print("[DEBUG] Extracting Excel content from", file_path)
     wb = load_workbook(file_path, data_only=False)
     evaluator = get_excel_evaluator(wb) if HAS_XLCALCULATOR else None
 
@@ -175,7 +167,7 @@ def extract_excel_content(file_path):
         sheet_content = f"Sheet: {sheet.title}\n"
         for row in sheet.iter_rows(values_only=False):
             for cell in row:
-                if cell.data_type == 'f':  # cell formula
+                if cell.data_type == 'f':
                     cell_text = f"Cell {cell.coordinate} Formula: {cell.value}"
                     adv = advanced_understand_formula(cell.value)
                     cell_text += f" | Advanced Understanding: {adv}"
@@ -184,16 +176,15 @@ def extract_excel_content(file_path):
                             result = evaluator.evaluate(f"{sheet.title}!{cell.coordinate}")
                             cell_text += f" | Evaluated Result: {result}"
                         except Exception as e:
-                            cell_text += f" (Evaluation Error: {str(e)})"
+                            cell_text += f" (Eval Error: {str(e)})"
                 else:
                     cell_text = f"Cell {cell.coordinate} Value: {cell.value}"
                 sheet_content += cell_text + "\n"
         content_list.append(sheet_content)
-
     return "\n".join(content_list)
 
 def process_pdf_file(file_path):
-    debug_print(f"[DEBUG] Processing PDF file: {file_path}")
+    """OCR + chunked summarization of PDF."""
     text = ""
     doc = fitz.open(file_path)
     for i in range(len(doc)):
@@ -209,264 +200,207 @@ def process_pdf_file(file_path):
             text += pytesseract.image_to_string(img) + "\n"
             os.remove(img_path)
 
-    # Summarize with advanced approach
-    advanced_summary = advanced_understand_pdf(text)
-    combined_text = f"Extracted Text:\n{text}\n\nAdvanced PDF Understanding:\n{advanced_summary}"
-    return combined_text
+    adv_summary = advanced_understand_pdf(text)
+    combined = f"Extracted Text:\n{text}\n\nAdvanced PDF Understanding:\n{adv_summary}"
+    return combined
 
-#####################################
-# ADMIN MODE
-#####################################
+##############################
+# Admin Functions
+##############################
 
 def generate_contextual_outcomes(admin_text, excel_content, pdf_content):
     """
-    Creates a single "File Learning Outcomes" text, merging:
-    - Admin Explanation
-    - Summaries of Excel/PDF
-    - Thought-provoking follow-up questions
+    Combine the data into a single 'File Learning Outcomes' text.
     """
     combined = (
         f"Admin Explanation:\n{admin_text}\n\n"
         f"Excel Content:\n{excel_content}\n\n"
         f"PDF Content:\n{pdf_content}"
     )
-    # Instead of generic suggestions, generate more context-specific prompts
     prompt = (
-        "You are a specialized engineering AI. Below is new data (Excel calculations, PDF text, "
-        "and the user's explanation). Provide a single, unified 'File Learning Outcome' that includes:\n"
-        "1) A concise but detailed interpretation of the uploaded data.\n"
-        "2) Specific, context-aware questions or clarifications if something seems ambiguous.\n"
-        "3) Any alternative or more efficient methods to perform these calculations.\n\n"
+        "You are a specialized engineering AI. Below is new data (Excel, PDF, etc.) plus "
+        "the user's explanation. Provide a single 'File Learning Outcome' that includes:\n"
+        "1) A concise but detailed interpretation of the data.\n"
+        "2) Context-aware questions or clarifications for ambiguous points.\n"
+        "3) Any alternative or more efficient methods.\n\n"
         f"{combined}\n\n"
-        "Please produce a direct, single text response labeled as 'File Learning Outcomes:' "
-        "with your best interpretation and targeted follow-up prompts.\n"
+        "Output:\n"
     )
-
     messages = [HumanMessage(content=prompt)]
-
-    def llm_call(msgs):
-        llm = ChatOpenAI(temperature=0.2, openai_api_key=OPENAI_API_KEY)
-        return llm(msgs)
-
-    response_text = "Error: No response received."
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(llm_call, messages)
-        try:
-            response = future.result(timeout=20)
-            if response and hasattr(response, "content"):
-                response_text = response.content
-        except Exception as e:
-            debug_print("[DEBUG] Timeout/error generating contextual outcomes:", e)
-            response_text = f"Error generating outcomes: {str(e)}"
-
-    return response_text
+    llm = ChatOpenAI(temperature=0.2, openai_api_key=OPENAI_API_KEY)
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(llm, messages)
+            response = future.result(timeout=30)
+        if response and hasattr(response, "content"):
+            return response.content.strip()
+        else:
+            return "Error: No response from LLM."
+    except Exception as e:
+        return f"Error generating outcomes: {str(e)}"
 
 def admin_learn(admin_text, excel_files, pdf_files):
-    """
-    Processes each file, merges into a single text, and returns a context-specific 'File Learning Outcomes'.
-    We also return empty lists to clear the file components in the UI afterwards.
-    """
-    debug_print("[DEBUG] Entered admin_learn function.")
+    """Process files, combine data, return a single outcome text."""
     excel_content = ""
     pdf_content = ""
 
-    # Process Excel
+    # Save & Process Excel
     if excel_files:
-        for fobj in excel_files:
-            file_name, file_data = read_file_data(fobj)
-            saved_path = os.path.join(UPLOAD_DIR, file_name)
-            with open(saved_path, "wb") as fp:
-                fp.write(file_data)
-            excel_content_part = extract_excel_content(saved_path)
-            excel_content += excel_content_part + "\n"
-            os.remove(saved_path)
+        for f in excel_files:
+            if f is not None:
+                fname, fdata = read_file_data(f)
+                if fname and fdata:
+                    fpath = os.path.join(UPLOAD_DIR, fname)
+                    with open(fpath, "wb") as out:
+                        out.write(fdata)
+                    excel_content += extract_excel_content(fpath) + "\n"
+                    os.remove(fpath)
 
-    # Process PDFs
+    # Save & Process PDFs
     if pdf_files:
-        for fobj in pdf_files:
-            file_name, file_data = read_file_data(fobj)
-            saved_path = os.path.join(UPLOAD_DIR, file_name)
-            with open(saved_path, "wb") as fp:
-                fp.write(file_data)
-            pdf_content_part = process_pdf_file(saved_path)
-            pdf_content += pdf_content_part + "\n"
-            os.remove(saved_path)
+        for f in pdf_files:
+            if f is not None:
+                fname, fdata = read_file_data(f)
+                if fname and fdata:
+                    fpath = os.path.join(UPLOAD_DIR, fname)
+                    with open(fpath, "wb") as out:
+                        out.write(fdata)
+                    pdf_content += process_pdf_file(fpath) + "\n"
+                    os.remove(fpath)
 
-    # Generate a single 'File Learning Outcomes' text
     outcomes = generate_contextual_outcomes(admin_text, excel_content, pdf_content)
-    debug_print("[DEBUG] admin_learn -> outcome length:", len(outcomes))
-
-    # Return outcomes + empty lists so file components auto-clear
-    return outcomes, [], []
+    return outcomes
 
 def confirm_learning(admin_text, excel_files, pdf_files):
     """
-    Stores the new data into FAISS. Re-uses the same processing function for consistency.
+    Actually store the new data into the FAISS vector store.
     """
-    debug_print("[DEBUG] Entered confirm_learning function.")
-    outcomes, _, _ = admin_learn(admin_text, excel_files, pdf_files)
-    global admin_upload_content
-    admin_upload_content = outcomes
+    outcomes = admin_learn(admin_text, excel_files, pdf_files)
+    st.session_state.admin_upload_content = outcomes
 
-    embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    embed_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
     try:
         if os.path.exists(VECTOR_STORE_PATH):
-            debug_print("[DEBUG] Loading existing FAISS store. (Dangerous deserialization).")
             vector_store = FAISS.load_local(
                 VECTOR_STORE_PATH,
-                embedding_model,
+                embed_model,
                 allow_dangerous_deserialization=True
             )
             vector_store.add_texts([outcomes])
         else:
-            debug_print("[DEBUG] Creating new FAISS store from scratch.")
-            vector_store = FAISS.from_texts([outcomes], embedding_model)
-
+            vector_store = FAISS.from_texts([outcomes], embed_model)
         vector_store.save_local(VECTOR_STORE_PATH)
-        debug_print("[DEBUG] Vector store updated successfully.")
+        return f"Learning confirmed and vector store updated!\n\n{outcomes}"
     except Exception as e:
-        debug_print("[DEBUG] Error updating vector store:", e)
-        return f"Error updating vector store: {str(e)}", outcomes, [], []
+        return f"Error updating vector store: {str(e)}\n\n{outcomes}"
 
-    return "Learning confirmed and vector store updated!", outcomes, [], []
+##############################
+# Client Mode
+##############################
 
-#####################################
-# CLIENT MODE
-#####################################
-
-async def client_chat(query, history):
+async def client_chat(query):
     """
-    The user-facing chatbot. We do a retrieval-based approach if we have a vector store.
-    The prompt is more context-aware to show deeper intelligence.
+    Retrieve from the vector store or fallback to direct call.
     """
-    debug_print("[DEBUG] client_chat query:", query)
-    start_time = time.time()
-    final_answer = "No response"
-
-    try:
-        if (BYPASS_RETRIEVAL or not os.path.exists(VECTOR_STORE_PATH) or not admin_upload_content.strip()):
-            debug_print("[DEBUG] No vector store => direct LLM call.")
-            prompt = (
-                f"You are a specialized engineering bot. The user asks:\n{query}\n\n"
-                "Provide a detailed, step-by-step answer or calculation method. "
-                "Reference known engineering standards if relevant."
+    if (BYPASS_RETRIEVAL or
+        not os.path.exists(VECTOR_STORE_PATH) or
+        not st.session_state.admin_upload_content.strip()):
+        # Direct LLM
+        prompt = (
+            f"You are a specialized engineering bot. User asks:\n{query}\n\n"
+            "Provide a detailed, step-by-step answer referencing known standards."
+        )
+        messages = [HumanMessage(content=prompt)]
+        llm = ChatOpenAI(temperature=0.1, openai_api_key=OPENAI_API_KEY)
+        try:
+            response = await asyncio.to_thread(llm, messages)
+            return response.content if response else "No response"
+        except Exception as e:
+            return f"Error in direct call: {str(e)}"
+    else:
+        # Retrieval QA
+        def retrieval_run(q):
+            embed_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+            vector_store = FAISS.load_local(
+                VECTOR_STORE_PATH,
+                embed_model,
+                allow_dangerous_deserialization=True
             )
-            messages = [HumanMessage(content=prompt)]
-
-            def direct_llm_call(msgs):
-                llm = ChatOpenAI(temperature=0.1, openai_api_key=OPENAI_API_KEY)
-                return llm(msgs)
-
-            try:
-                response = await asyncio.to_thread(direct_llm_call, messages)
-                final_answer = response.content if response else "No response"
-            except Exception as e:
-                final_answer = f"Error in direct call: {str(e)}"
-        else:
-            debug_print("[DEBUG] Using retrieval QA chain.")
-            def run_retrieval_qa(q):
-                embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-                vector_store = FAISS.load_local(
-                    VECTOR_STORE_PATH,
-                    embedding_model,
-                    allow_dangerous_deserialization=True
-                )
-                qa_chain = RetrievalQA.from_chain_type(
-                    llm=ChatOpenAI(
-                        temperature=0.1,
-                        openai_api_key=OPENAI_API_KEY
-                    ),
-                    chain_type="stuff",
-                    retriever=vector_store.as_retriever(),
-                    verbose=True
-                )
-
-                # More context-aware prompt:
-                # We can instruct the chain or rely on chain_type='stuff' that merges context + user query.
-                return qa_chain.run(q)
-
-            try:
-                final_answer = await asyncio.to_thread(run_retrieval_qa, query)
-            except Exception as e:
-                final_answer = f"Error in retrieval QA: {str(e)}"
-
-        history.append({"role": "user", "content": query})
-        history.append({"role": "assistant", "content": final_answer})
-    except Exception as e:
-        debug_print("[DEBUG] Exception in client_chat:", e)
-        history.append({"role": "system", "content": f"Error in client chat: {str(e)}"})
-
-    elapsed = time.time() - start_time
-    debug_print(f"[DEBUG] client_chat time: {elapsed:.2f}s")
-    return history, history
-
-#####################################
-# GRADIO APP
-#####################################
-
-with gr.Blocks() as interface:
-    gr.Markdown("# Advanced Engineering Chatbot\n")
-    gr.Markdown("### Admin Mode vs. Client Mode with Enhanced Features\n")
-
-    with gr.Tabs():
-        with gr.Tab("Admin Mode (Private)"):
-            gr.Markdown("**Upload & Learn** new engineering documents.")
-
-            admin_text_input = gr.Textbox(
-                label="Your Explanation/Context",
-                lines=3,
-                placeholder="Describe the methods, references, or context here..."
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=ChatOpenAI(temperature=0.1, openai_api_key=OPENAI_API_KEY),
+                chain_type="stuff",
+                retriever=vector_store.as_retriever(),
+                verbose=True
             )
+            return qa_chain.run(q)
 
-            # Separate placeholders for each file type
-            admin_excel_upload = gr.Files(
-                label="Excel Files",
-                file_types=[".xlsx", ".xls"]
-            )
-            admin_pdf_upload = gr.Files(
-                label="PDF Files",
-                file_types=[".pdf"]
-            )
+        try:
+            response = await asyncio.to_thread(retrieval_run, query)
+            return response
+        except Exception as e:
+            return f"Error in retrieval QA: {str(e)}"
 
-            process_btn = gr.Button("Process Uploads (Preview)")
-            # Instead of separate combined preview + JSON suggestions, unify them
-            file_learning_outcomes = gr.Textbox(
-                label="File Learning Outcomes",
-                lines=10
-            )
+##############################
+# MAIN Streamlit UI
+##############################
 
-            # Return typed file components so we can auto-clear them
-            confirm_btn = gr.Button("Confirm and Learn")
-            admin_learn_status = gr.Textbox(label="Learning Status", lines=2)
+def main():
+    st.set_page_config(page_title="Engineering Chatbot", layout="wide")
+    st.title("Engineering Chatbot (Streamlit Version)")
 
-            # process_btn -> admin_learn
-            # unify "File Learning Outcomes" output and auto-clear file components
-            process_btn.click(
-                fn=admin_learn,
-                inputs=[admin_text_input, admin_excel_upload, admin_pdf_upload],
-                outputs=[file_learning_outcomes, admin_excel_upload, admin_pdf_upload]
-            )
+    tabs = st.tabs(["Admin Mode (Private)", "Client Mode"])
+    # -----------------------------------
+    # Admin Mode
+    # -----------------------------------
+    with tabs[0]:
+        st.subheader("Master Console: Upload & Learn")
+        admin_text_input = st.text_area(
+            "Admin Explanation/Context",
+            placeholder="Describe the methods, references, or context here...",
+            height=100
+        )
+        # File Uploaders (accept multiple)
+        excel_files = st.file_uploader(
+            "Upload Excel Files",
+            type=["xlsx","xls"],
+            accept_multiple_files=True
+        )
+        pdf_files = st.file_uploader(
+            "Upload PDF Files",
+            type=["pdf"],
+            accept_multiple_files=True
+        )
 
-            # confirm_btn -> confirm_learning
-            confirm_btn.click(
-                fn=confirm_learning,
-                inputs=[admin_text_input, admin_excel_upload, admin_pdf_upload],
-                outputs=[admin_learn_status, file_learning_outcomes, admin_excel_upload, admin_pdf_upload]
-            )
+        if st.button("Process Uploads (Preview)"):
+            outcomes = admin_learn(admin_text_input, excel_files, pdf_files)
+            st.text_area("File Learning Outcomes", outcomes, height=300)
 
-        with gr.Tab("Client Mode"):
-            gr.Markdown("**Query** the validated knowledge base here.")
-            chatbot = gr.Chatbot(label="Engineering Chatbot", type="messages")
-            query_input = gr.Textbox(label="Your Query")
-            chat_state = gr.State([])
+        if st.button("Confirm and Learn"):
+            result = confirm_learning(admin_text_input, excel_files, pdf_files)
+            st.text_area("Learning Status", result, height=300)
 
-            send_btn = gr.Button("Send")
-            send_btn.click(
-                fn=client_chat,
-                inputs=[query_input, chat_state],
-                outputs=[chatbot, chat_state]
-            )
+    # -----------------------------------
+    # Client Mode
+    # -----------------------------------
+    with tabs[1]:
+        st.subheader("Client Mode: Ask a Question")
+        user_query = st.text_input("Your Query:")
+        if "client_chat_history" not in st.session_state:
+            st.session_state.client_chat_history = []
 
-# Optionally secure entire interface with admin credentials:
-# interface.launch(auth=(ADMIN_USERNAME, ADMIN_PASSWORD), share=False)
-interface.launch(share=False)
+        if st.button("Send Query"):
+            answer = asyncio.run(client_chat(user_query))
+            # Store conversation in session
+            st.session_state.client_chat_history.append(("user", user_query))
+            st.session_state.client_chat_history.append(("assistant", answer))
+
+        # Display chat history
+        for role, content in st.session_state.client_chat_history:
+            if role == "user":
+                st.markdown(f"**You:** {content}")
+            else:
+                st.markdown(f"**Chatbot:** {content}")
+
+
+if __name__ == "__main__":
+    main()
